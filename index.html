@@ -179,8 +179,9 @@ tr.done td:nth-child(6){color:var(--green)}
     <option>4</option><option selected>8</option><option>12</option><option>16</option>
   </select></label>
   <label>view <select id="inM">
+    <option value="async" selected>🤝 async · self-timed handshake</option>
     <option value="clock">⏱ clocked · 1 stage + register</option>
-    <option value="comb" selected>⚡ no clock · n stages ripple</option>
+    <option value="comb">⚡ no clock · n stages ripple</option>
   </select></label>
   <button id="bRnd" title="random N">⚄ random</button>
   <span class="sep"></span>
@@ -203,7 +204,7 @@ tr.done td:nth-child(6){color:var(--green)}
       <span data-p="0">INPUTS</span><span data-p="1">NOT</span><span data-p="2">AND</span>
       <span data-p="3">OR</span><span data-p="4" class="clk">CLK ⇧</span>
     </div>
-    <div id="die" class="card"><svg id="svg" viewBox="0 0 1000 620" aria-label="gate-level schematic of the divide-by-3 stage"></svg><svg id="csvg" viewBox="0 0 700 600" style="display:none" aria-label="combinational cascade of divide-by-3 stages"></svg></div>
+    <div id="die" class="card"><svg id="svg" viewBox="0 0 1000 620" aria-label="gate-level schematic of the divide-by-3 stage"></svg><svg id="csvg" viewBox="0 0 700 600" style="display:none" aria-label="combinational cascade of divide-by-3 stages"></svg><svg id="asvg" viewBox="0 0 1000 700" style="display:none" aria-label="asynchronous self-timed divide-by-3 stage with dual-rail logic and completion detection"></svg></div>
     <div class="convey card">
       <span class="clab">QUOTIENT Q</span><div class="bitrow" id="qbits"></div>
       <span class="clab">REMAINDER R</span><div class="bitrow" id="rbits"></div>
@@ -241,7 +242,11 @@ tr.done td:nth-child(6){color:var(--green)}
     <b>v=(r≪1)|b</b>. Since r&lt;3, v≤5, so the quotient digit is a single bit:
     v≥3 → q=1, r′=v−3, else q=0, r′=v. The comparison and subtraction are baked into
     the NOT/AND/OR gates — no arithmetic unit anywhere.
-    <br><br><b>⏱ clocked</b>: one copy of the stage reused n times via the remainder
+    <br><br><b>🤝 async</b>: one stage, no clock — every signal rides two rails
+    (x.t, x.f) so the data carries its own validity; a C-element completion detector
+    fires DONE exactly when the gates finish, the latch captures r′, and a NULL spacer
+    wave resets the rails for the next bit. Unbounded bits, finite hardware, zero clock.
+    <b>⏱ clocked</b>: one copy of the stage reused n times via the remainder
     register — minimal hardware, n cycles. <b>⚡ no clock</b>: n chained copies of the
     same stage, no register — all inputs applied at once, the answer settles after one
     propagation wave down the chain.</div>
@@ -565,19 +570,19 @@ const csvg = $('#csvg');
 let STG = [];
 const CASC_SH = 530, CASC_TOP = 40;
 let CASC_H = 600;
-function addWire(store, net, pts){
+function addWire(store, net, pts, parent = csvg){
   const d = 'M' + pts.map(p => p.join(',')).join(' L');
-  const base  = el('path', {d, 'class':'w stale'}, csvg);
-  const flow  = el('path', {d, 'class':'flow'},   csvg);
-  const pulse = el('path', {d, 'class':'pulse'},  csvg);
+  const base  = el('path', {d, 'class':'w stale'}, parent);
+  const flow  = el('path', {d, 'class':'flow'},   parent);
+  const pulse = el('path', {d, 'class':'pulse'},  parent);
   (store.wires[net] = store.wires[net] || []).push({base, flow, pulse});
 }
-function addBadge(store, net, x, y, shape){
-  const g = el('g', {'class':'badge stale'}, csvg);
+function addBadge(store, net, x, y, shape, parent = csvg){
+  const g = el('g', {'class':'badge stale'}, parent);
   if (shape === 'rect') el('rect', {x:x-22, y:y-13, width:44, height:26, rx:5}, g);
   else el('circle', {cx:x, cy:y, r:shape || 8.5}, g);
   const t = txt(x, y, '·', '', 'middle', g);
-  if (shape === 13) t.setAttribute('font-size', 13);
+  if (shape === 13 || shape === 11) t.setAttribute('font-size', 13);
   (store.badges[net] = store.badges[net] || []).push({g, t});
 }
 function buildCascade(){
@@ -679,6 +684,167 @@ function settleStage(k){
   if (S.i >= S.width){ st.bound.setAttribute('class', 'sbound done'); finish(); }
 }
 
+/* --- asynchronous self-timed view (no clock, sequential) ---
+   Dual-rail DIMS logic: each signal x rides two rails (x.t, x.f); both low = NULL.
+   8 minterm C-elements (one per truth-table row) + OR planes per output rail.
+   A completion detector fires DONE when all output pairs are valid; DONE latches
+   r′ and acks the bit source; a NULL wave drains the rails before the next bit.
+   Output VALUES still come from evaluating the same gate netlist. */
+const asvg = $('#asvg');
+const ASY = {wires:{}, dots:{}, badges:{}, gates:{}, built:false, latch:null};
+const ACOLS = [
+  {net:'q.t',   x:430, sel:o => o.q   === 1}, {net:'q.f',   x:460, sel:o => o.q   === 0},
+  {net:'r1p.t', x:490, sel:o => o.r1n === 1}, {net:'r1p.f', x:520, sel:o => o.r1n === 0},
+  {net:'r0p.t', x:550, sel:o => o.r0n === 1}, {net:'r0p.f', x:580, sel:o => o.r0n === 0},
+];
+function buildAsync(){
+  const P = asvg;
+  txt(500, 20, 'asynchronous · dual-rail + completion detection — no clock anywhere, unbounded input length', 'lbl', 'middle', P);
+  // bit source (the environment: presents one bit per handshake)
+  el('rect', {x:18, y:42, width:120, height:64, rx:8, 'class':'ffbox'}, P);
+  txt(78, 58, 'BIT SOURCE', 'lbl', 'middle', P);
+  addBadge(ASY, 'b', 78, 84, 'rect', P);
+  // async latch (holds r; no clock pin — captured by DONE)
+  const lat = el('g', {'class':'ff'}, P);
+  el('rect', {x:18, y:150, width:120, height:120, rx:8, 'class':'ffbox'}, lat);
+  txt(78, 166, 'ASYNC LATCH', 'lbl', 'middle', lat);
+  txt(52, 200, 'r =', 'lbl', 'end', lat);
+  addBadge(ASY, 'r1lat', 70, 196, 8.5, P);
+  addBadge(ASY, 'r0lat', 96, 196, 8.5, P);
+  txt(78, 236, 'captures r′ on DONE↑,', 'lbl2', 'middle', lat);
+  txt(78, 250, 'drives NULL on ack', 'lbl2', 'middle', lat);
+  ASY.latch = lat;
+  // dual rails: [net, x, entry y]
+  for (const [net, x, ey] of [['r1.t',170,215],['r1.f',195,232],['r0.t',220,249],['r0.f',245,266]]){
+    addWire(ASY, net, [[138, ey],[x, ey]], P);
+    addWire(ASY, net, [[x, 92],[x, 469]], P);
+    (ASY.dots[net] = ASY.dots[net] || []).push(el('circle', {cx:x, cy:ey, r:3.5, 'class':'dot stale'}, P));
+  }
+  addWire(ASY, 'b.t', [[138, 62],[270, 62],[270, 469]], P);
+  addWire(ASY, 'b.f', [[138, 86],[295, 86],[295, 469]], P);
+  ['r1.t','r1.f','r0.t','r0.f','b.t','b.f'].forEach((n, i) =>
+    txt([170,195,220,245,270,295][i], 486 + (i%2)*13, n, 'lbl2', 'middle', P));
+  // minterm C-elements — one per truth-table row
+  const railX = {r1:[195,170], r0:[245,220], b:[295,270]};  // [f,t] indexed by bit
+  for (let k = 0; k < 8; k++){
+    const y = 110 + k*50, bits = [(k>>2)&1, (k>>1)&1, k&1];
+    const taps = [
+      [railX.r1[bits[0]], y-9, bits[0] ? 'r1.t' : 'r1.f'],
+      [railX.r0[bits[1]], y,   bits[1] ? 'r0.t' : 'r0.f'],
+      [railX.b[bits[2]],  y+9, bits[2] ? 'b.t'  : 'b.f'],
+    ];
+    for (const [rx, ty, net] of taps){
+      addWire(ASY, net, [[rx, ty],[335, ty]], P);
+      (ASY.dots[net] = ASY.dots[net] || []).push(el('circle', {cx:rx, cy:ty, r:3.5, 'class':'dot stale'}, P));
+    }
+    const g = el('g', {'class':'gt stale'}, P);
+    el('circle', {cx:350, cy:y, r:15, 'class':'gate'}, g);
+    txt(350, y, 'C', 'lbl', 'middle', g).setAttribute('dominant-baseline', 'central');
+    ASY.gates['m'+k] = g;
+    addWire(ASY, 'm'+k, [[365, y],[610, y]], P);
+    txt(378, y-8, `m${k} = ${bits.join('')}${k >= 6 ? ' (unreachable)' : ''}`, 'lbl2', 'start', P);
+  }
+  // OR plane: column per output rail, dot where a minterm feeds it
+  for (const c of ACOLS){
+    const rows = [];
+    for (let k = 0; k < 8; k++)
+      if (c.sel(netlistStep((k>>2)&1, (k>>1)&1, k&1))) rows.push(110 + k*50);
+    addWire(ASY, c.net, [[c.x, Math.min(...rows)],[c.x, 522]], P);
+    for (const ry of rows)
+      (ASY.dots[c.net] = ASY.dots[c.net] || []).push(el('circle', {cx:c.x, cy:ry, r:3.5, 'class':'dot stale'}, P));
+    const g = el('g', {'class':'gt stale'}, P);
+    el('rect', {x:c.x-14, y:522, width:28, height:22, rx:4, 'class':'gate'}, g);
+    txt(c.x, 533, '≥1', 'lbl', 'middle', g).setAttribute('dominant-baseline', 'central');
+    ASY.gates[c.net] = g;
+  }
+  // q rails out
+  addWire(ASY, 'q.t', [[430,544],[430,572],[640,572]], P);
+  addWire(ASY, 'q.f', [[460,544],[460,588],[640,588]], P);
+  addBadge(ASY, 'q', 664, 580, 11, P);
+  txt(664, 608, '↓ quotient bit', 'lbl', 'middle', P);
+  // r′ rails loop back into the latch
+  addWire(ASY, 'r1p.t', [[490,544],[490,614],[60,614],[60,270]], P);
+  addWire(ASY, 'r1p.f', [[520,544],[520,628],[75,628],[75,270]], P);
+  addWire(ASY, 'r0p.t', [[550,544],[550,642],[90,642],[90,270]], P);
+  addWire(ASY, 'r0p.f', [[580,544],[580,656],[105,656],[105,270]], P);
+  ['r1′.t','r1′.f','r0′.t','r0′.f'].forEach((n, i) => txt(150, 610 + i*14, n, 'lbl2', 'start', P));
+  // completion detector
+  el('rect', {x:700, y:470, width:270, height:120, rx:8, 'class':'ffbox'}, P);
+  txt(835, 492, 'COMPLETION DETECT', 'lbl', 'middle', P);
+  txt(835, 512, 'valid(x) = x.t ∨ x.f', 'lbl2', 'middle', P);
+  txt(835, 528, 'DONE = C(valid q, r1′, r0′)', 'lbl2', 'middle', P);
+  txt(812, 566, 'DONE', 'lbl', 'end', P);
+  addBadge(ASY, 'done', 835, 562, 11, P);
+  ACOLS.forEach((c, j) => addWire(ASY, c.net, [[c.x, 472 + j*8],[700, 472 + j*8]], P));
+  // ack handshake (dashed): DONE tells source + latch to move on — this replaces the clock
+  addWire(ASY, 'ack', [[835,470],[835,40],[100,40],[100,42]], P);
+  addWire(ASY, 'ack', [[18,74],[8,74],[8,210],[18,210]], P);
+  ASY.wires['ack'].forEach(w => { w.base.style.strokeDasharray = '7 5'; w.flow.style.display = 'none'; });
+  txt(490, 34, 'ack — completion handshake, not a clock', 'lbl2', 'middle', P);
+  ASY.built = true;
+}
+function setDual(p, v, doPulse){  // v: 0 | 1 | undefined (NULL — both rails empty)
+  paintNet(ASY, p+'.t', v === undefined ? undefined : (v ? 1 : 0));
+  paintNet(ASY, p+'.f', v === undefined ? undefined : (v ? 0 : 1));
+  if (doPulse && v !== undefined) pulseStore(ASY, v ? p+'.t' : p+'.f');
+}
+function resetAsync(){
+  for (const p of ['b','r1','r0','q','r1p','r0p']) setDual(p, undefined);
+  for (let k = 0; k < 8; k++) paintNet(ASY, 'm'+k, undefined);
+  for (const n of ['done','ack','b','q']) paintNet(ASY, n, undefined);
+  paintNet(ASY, 'r1lat', 0); paintNet(ASY, 'r0lat', 0);
+}
+const APHASES = [
+  function(){ // DATA wave: environment presents inputs — data validity IS the request
+    setPhaseInd(0);
+    const b = S.bits[S.i];
+    S.nets = {b, r1:S.r1, r0:S.r0}; updateEqs();
+    setDual('b', b, true); setDual('r1', S.r1, true); setDual('r0', S.r0, true);
+    paintNet(ASY, 'b', b);
+    document.querySelectorAll('#bits .bit').forEach((d, k) => d.classList.toggle('cur', k === S.i));
+    const v = (S.r1*2 + S.r0)*2 + b;
+    $('#stB').textContent = b; $('#stV').textContent = `${bin(v,3)} (${v})`; $('#stQb').textContent = '—';
+    traceStart(S.i, b, S.r1*2 + S.r0, v);
+    status();
+  },
+  function(){ // exactly one minterm C-element fires (its row of the truth table)
+    setPhaseInd(1);
+    const idx = S.r1*4 + S.r0*2 + S.nets.b;
+    for (let k = 0; k < 8; k++) paintNet(ASY, 'm'+k, k === idx ? 1 : 0);
+    pulseStore(ASY, 'm'+idx);
+    const g = ASY.gates['m'+idx];
+    g.classList.remove('flash'); void g.getBoundingClientRect(); g.classList.add('flash');
+    hlTT(S.r1, S.r0, S.nets.b);
+  },
+  function(){ // output rails become valid — values from the same gate netlist
+    setPhaseInd(2);
+    const nets = {r1:S.r1, r0:S.r0, b:S.nets.b};
+    for (const id of GATE_ORDER) nets[GATES[id].out] = evalGate(GATES[id], nets);
+    S.nets = nets; updateEqs();
+    setDual('q', nets.q, true); setDual('r1p', nets.rout1, true); setDual('r0p', nets.rout0, true);
+    paintNet(ASY, 'q', nets.q);
+    $('#stQb').textContent = nets.q; traceQ(nets.q);
+  },
+  function(){ // all pairs valid → DONE↑ → latch r′, emit q, ack the source
+    setPhaseInd(3);
+    paintNet(ASY, 'done', 1); paintNet(ASY, 'ack', 1); pulseStore(ASY, 'ack');
+    ASY.latch.classList.remove('latch'); void ASY.latch.getBoundingClientRect(); ASY.latch.classList.add('latch');
+    S.qbits[S.i] = S.nets.q;
+    const qc = $('#qbits').children[S.i]; qc.textContent = S.nets.q; qc.classList.add('qset');
+    const bc = $('#bits').children[S.i]; bc.classList.remove('cur'); bc.classList.add('used');
+    traceEnd(S.nets.rout1*2 + S.nets.rout0);
+  },
+  function(){ // NULL wave: rails drain, DONE↓ — ready for the next bit
+    setPhaseInd(4);
+    S.r1 = S.nets.rout1; S.r0 = S.nets.rout0;
+    S.nets = {}; updateEqs();
+    resetAsync();
+    paintNet(ASY, 'r1lat', S.r1); paintNet(ASY, 'r0lat', S.r0);
+    S.i++; status();
+    if (S.i >= S.width) finish();
+  },
+];
+
 /* ============================== PHASES ============================== */
 const PHASES = [
   function ph0(){ // present inputs
@@ -744,6 +910,7 @@ function finish(){
 function setRunBtn(){ $('#bRun').textContent = S.running ? '⏸ pause' : '▶ run'; }
 function advance(){
   if (S.mode === 'comb'){ settleStage(S.i); return; }
+  if (S.mode === 'async'){ APHASES[S.phase](); S.phase = (S.phase + 1) % 5; return; }
   PHASES[S.phase](); S.phase = (S.phase + 1) % 5;
 }
 async function runLoop(){
@@ -769,6 +936,7 @@ function reset(){
   FF_ELS.r1.v.textContent = '0'; FF_ELS.r0.v.textContent = '0';
   buildRows();
   if (S.mode === 'comb') buildCascade();
+  if (ASY.built) resetAsync();
   $('#trb').innerHTML = ''; liveRow = null;
   document.querySelectorAll('#tt tr.hl').forEach(t => t.classList.remove('hl'));
   $('#banner').className = ''; $('#banner').textContent = '';
@@ -792,18 +960,24 @@ $('#bRst').onclick = reset;
 $('#bRnd').onclick = () => setN(Math.floor(Math.random() * 2 ** S.width));
 $('#inN').onchange = e => setN(+e.target.value);
 $('#inW').onchange = e => { S.width = +e.target.value; setN(S.N); };
+const PHLBL = {
+  clock:['INPUTS','NOT','AND','OR','CLK ⇧'],
+  async:['DATA WAVE','MINTERM C','OUTPUT RAILS','DONE → ACK','NULL WAVE'],
+};
 function setMode(m){
   S.mode = m;
-  const clk = m === 'clock';
   $('#inM').value = m;
-  svg.style.display = clk ? '' : 'none';
-  csvg.style.display = clk ? 'none' : '';
-  $('#die').classList.toggle('comb', !clk);
-  $('#phind').style.display = clk ? '' : 'none';
-  $('#bPh').textContent = clk ? '▸ phase' : '▸ stage';
-  $('#bCy').style.display = clk ? '' : 'none';
-  $('#stStepLbl').textContent = clk ? 'cycle' : 'stage';
-  $('#stRLbl').textContent = clk ? 'remainder reg r' : 'remainder r (ripple)';
+  svg.style.display  = m === 'clock' ? '' : 'none';
+  csvg.style.display = m === 'comb'  ? '' : 'none';
+  asvg.style.display = m === 'async' ? '' : 'none';
+  $('#die').classList.toggle('comb', m === 'comb');
+  $('#phind').style.display = m === 'comb' ? 'none' : '';
+  if (m !== 'comb')
+    document.querySelectorAll('#phind span').forEach((s, i) => s.textContent = PHLBL[m][i]);
+  $('#bPh').textContent = m === 'comb' ? '▸ stage' : '▸ phase';
+  $('#bCy').style.display = m === 'comb' ? 'none' : '';
+  $('#stStepLbl').textContent = m === 'clock' ? 'cycle' : m === 'async' ? 'bit / handshake' : 'stage';
+  $('#stRLbl').textContent = m === 'clock' ? 'remainder reg r' : m === 'async' ? 'remainder r (latch)' : 'remainder r (ripple)';
   reset();
 }
 $('#inM').onchange = e => setMode(e.target.value);
@@ -852,8 +1026,9 @@ function selfTest(){
 /* ============================== INIT ============================== */
 buildTT();
 selfTest();
+buildAsync();
 setN(181);
-setMode('comb');   // no-clock cascade is the default view
+setMode('async');   // self-timed handshake is the default view
 </script>
 </body>
 </html>
