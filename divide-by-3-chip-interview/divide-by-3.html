@@ -531,7 +531,7 @@ function traceStart(i, b, r, v){
   liveRow.innerHTML = `<td>${i}</td><td>${b}</td><td>${bin(r,2)}</td><td>${bin(v,3)} (${v})</td>`
                     + `<td>${v >= 3 ? '✓' : '·'}</td><td>?</td><td>?</td>`;
   $('#trb').appendChild(liveRow);
-  liveRow.scrollIntoView({block:'nearest'});
+  const w = $('#trwrap'); w.scrollTop = w.scrollHeight;   // scroll only the trace box, never the page
 }
 function traceQ(q){ if (liveRow) liveRow.cells[5].textContent = q; }
 function traceEnd(rn){
