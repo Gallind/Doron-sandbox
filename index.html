@@ -124,12 +124,12 @@ g.ff.latch .ffbox{animation:ffl .5s ease-out}
 .clkw{fill:none; stroke:#4a6480; stroke-width:1.4}
 g.ff.latch .clkw{stroke:var(--pink)}
 /* cascade (no-clock) view */
-.sblock{fill:#0c1424; stroke:#33475e; stroke-width:1.5}
-g.stg .stxt{fill:#48586c; font-size:12px; dominant-baseline:central; text-anchor:middle}
-g.stg.done .sblock{stroke:var(--hi); filter:drop-shadow(0 0 4px rgba(56,232,255,.35))}
-g.stg.done .stxt{fill:#d9f6ff}
-g.stg.hot .sblock{stroke:#fff; filter:drop-shadow(0 0 12px var(--hi))}
-g.stg.hot .stxt{fill:#fff}
+.sbound{fill:none; stroke:#182636; stroke-width:1.5}
+.sbound.done{stroke:#1d4d61}
+.sbound.hot{stroke:var(--hi); filter:drop-shadow(0 0 10px rgba(56,232,255,.5))}
+.scap{fill:#41566d; font-size:13px; letter-spacing:2px}
+#die.comb{display:block; overflow-y:auto; scrollbar-width:thin; max-height:80vh}
+#die.comb #csvg{height:auto}
 /* panel widgets */
 .strow{display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px dashed #14202f}
 .strow b{color:#eaf6ff; font-weight:600}
@@ -179,8 +179,8 @@ tr.done td:nth-child(6){color:var(--green)}
     <option>4</option><option selected>8</option><option>12</option><option>16</option>
   </select></label>
   <label>view <select id="inM">
-    <option value="clock" selected>⏱ clocked · 1 stage + register</option>
-    <option value="comb">⚡ no clock · n stages ripple</option>
+    <option value="clock">⏱ clocked · 1 stage + register</option>
+    <option value="comb" selected>⚡ no clock · n stages ripple</option>
   </select></label>
   <button id="bRnd" title="random N">⚄ random</button>
   <span class="sep"></span>
@@ -351,6 +351,7 @@ const gWires = el('g',{},svg), gDots = el('g',{},svg), gGates = el('g',{},svg),
       gMisc = el('g',{},svg), gBadges = el('g',{},svg);
 
 const WIRE_ELS = {}, DOT_ELS = {}, BADGE_ELS = {}, GATE_ELS = {};
+const MAIN = {wires:WIRE_ELS, dots:DOT_ELS, badges:BADGE_ELS, gates:GATE_ELS};
 for (const [net, pts] of WIRES){
   const d = 'M' + pts.map(p => p.join(',')).join(' L');
   const base  = el('path', {d, 'class':'w stale'}, gWires);
@@ -361,9 +362,9 @@ for (const [net, pts] of WIRES){
 for (const [net, x, y] of DOTS)
   (DOT_ELS[net] = DOT_ELS[net] || []).push(el('circle',{cx:x, cy:y, r:3.5, 'class':'dot stale'}, gDots));
 
-function gateGroup(id, g){
-  const grp = el('g', {'class':'gt stale'}, gGates);
-  const x = g.x, cy = g.y;
+function gateGroup(g, yOff, parent, gates){
+  const grp = el('g', {'class':'gt stale'}, parent);
+  const x = g.x, cy = g.y + yOff;
   if (g.type === 'NOT'){
     el('path', {d:`M${x},${cy-13} L${x+26},${cy} L${x},${cy+13} Z`, 'class':'gate'}, grp);
     el('circle', {cx:x+31, cy, r:5, 'class':'gate'}, grp);
@@ -375,10 +376,10 @@ function gateGroup(id, g){
     const hh = 20, w = 56;
     el('path', {d:`M${x},${cy-hh} Q${x+w*0.62},${cy-hh} ${x+w},${cy} Q${x+w*0.62},${cy+hh} ${x},${cy+hh} Q${x+15},${cy} ${x},${cy-hh} Z`, 'class':'gate'}, grp);
   }
-  GATE_ELS[g.out] = grp;
+  gates[g.out] = grp;
   return grp;
 }
-for (const id of GATE_ORDER) gateGroup(id, GATES[id]);
+for (const id of GATE_ORDER) gateGroup(GATES[id], 0, gGates, GATE_ELS);
 
 // input pad b
 {
@@ -456,25 +457,24 @@ function updateEqs(){
     if (txt !== null) sp.textContent = txt;
   });
 }
-function updateNet(net){
-  const v = S.nets[net];
+function paintNet(store, net, v){
   const cls = v === undefined ? 'stale' : v ? 'on' : 'off';
-  (WIRE_ELS[net] || []).forEach(w => {
+  (store.wires[net] || []).forEach(w => {
     w.base.setAttribute('class', 'w ' + cls);
     w.flow.classList.toggle('go', v === 1);
   });
-  (DOT_ELS[net] || []).forEach(d => d.setAttribute('class', 'dot ' + cls));
-  (BADGE_ELS[net] || []).forEach(b => {
+  (store.dots[net] || []).forEach(d => d.setAttribute('class', 'dot ' + cls));
+  (store.badges[net] || []).forEach(b => {
     b.g.setAttribute('class', 'badge ' + (v === undefined ? 'stale' : v ? 'b1' : 'b0'));
     b.t.textContent = v === undefined ? '·' : v;
   });
-  const g = GATE_ELS[net];
+  const g = store.gates[net];
   if (g){ g.classList.remove('stale','on','off'); g.classList.add(cls); }
-  updateEqs();
 }
-function pulseNet(net){
+function updateNet(net){ paintNet(MAIN, net, S.nets[net]); updateEqs(); }
+function pulseStore(store, net){
   const d = dur() * 0.55;
-  (WIRE_ELS[net] || []).forEach(({pulse}) => {
+  (store.wires[net] || []).forEach(({pulse}) => {
     const L = pulse.getTotalLength();
     pulse.style.transition = 'none';
     pulse.style.strokeDasharray = L + ' ' + L;
@@ -486,6 +486,7 @@ function pulseNet(net){
     pulse.style.opacity = '0';
   });
 }
+function pulseNet(net){ pulseStore(MAIN, net); }
 function drive(net, v){ S.nets[net] = v; updateNet(net); pulseNet(net); }
 function flashGate(outNet){
   const g = GATE_ELS[outNet];
@@ -557,39 +558,93 @@ function traceEnd(rn){
 }
 
 /* --- combinational cascade (no-clock view) ---
-   Same stage equations, physically unrolled: n chained copies, no register.
-   One advance() step = one stage's outputs settling as the wave passes. */
+   The stage netlist physically unrolled: n full copies of the same gate
+   schematic, chained by ripple wires, no register and no clock.
+   One advance() step = one stage's gates settling as the wave passes. */
 const csvg = $('#csvg');
-let CASC = [];
+let STG = [];
+const CASC_SH = 530, CASC_TOP = 40;
+let CASC_H = 600;
+function addWire(store, net, pts){
+  const d = 'M' + pts.map(p => p.join(',')).join(' L');
+  const base  = el('path', {d, 'class':'w stale'}, csvg);
+  const flow  = el('path', {d, 'class':'flow'},   csvg);
+  const pulse = el('path', {d, 'class':'pulse'},  csvg);
+  (store.wires[net] = store.wires[net] || []).push({base, flow, pulse});
+}
+function addBadge(store, net, x, y, shape){
+  const g = el('g', {'class':'badge stale'}, csvg);
+  if (shape === 'rect') el('rect', {x:x-22, y:y-13, width:44, height:26, rx:5}, g);
+  else el('circle', {cx:x, cy:y, r:shape || 8.5}, g);
+  const t = txt(x, y, '·', '', 'middle', g);
+  if (shape === 13) t.setAttribute('font-size', 13);
+  (store.badges[net] = store.badges[net] || []).push({g, t});
+}
 function buildCascade(){
   csvg.innerHTML = '';
-  CASC = [];
-  const n = S.width, rowH = 64, top = 56, cx = 340;
-  csvg.setAttribute('viewBox', `0 0 700 ${top + n*rowH + 44}`);
-  txt(20, 20, 'no clock — all n input bits applied at once; the remainder ripples down and settles', 'lbl2', 'start', csvg);
-  txt(cx, top - 26, 'r = 00 (initial remainder)', 'lbl', 'middle', csvg);
-  el('path', {d:`M${cx},${top-18} L${cx},${top}`, 'class':'w off'}, csvg);
+  STG = [];
+  const n = S.width;
+  CASC_H = CASC_TOP + n*CASC_SH + 20;
+  csvg.setAttribute('viewBox', `0 0 1000 ${CASC_H}`);
+  txt(500, 22, 'no clock — n copies of the same gate stage; all inputs applied at once, the remainder ripples down until it settles', 'lbl', 'middle', csvg);
   for (let k = 0; k < n; k++){
-    const y0 = top + k*rowH, idx = n - 1 - k;
-    const grp = el('g', {'class':'stg'}, csvg);
-    // inputs are live from t=0 — no clock gates them
-    const bw = el('path', {d:`M70,${y0+23} L170,${y0+23}`, 'class':'w ' + (S.bits[k] ? 'on' : 'off')}, grp);
-    txt(64, y0+27, `b${idx}=${S.bits[k]}`, 'netlbl', 'end', grp);
-    el('rect', {x:170, y:y0, width:340, height:46, rx:7, 'class':'sblock'}, grp);
-    txt(174, y0-6, `STAGE ${k}`, 'lbl2', 'start', grp);
-    const t = txt(cx, y0+23, `b=${S.bits[k]}  ·  not settled`, 'stxt', 'middle', grp);
-    const qw = el('path', {d:`M510,${y0+23} L570,${y0+23}`, 'class':'w stale'}, grp);
-    const qg = el('g', {'class':'badge stale'}, grp);
-    el('circle', {cx:584, cy:y0+23, r:9}, qg);
-    const qt = txt(584, y0+23, '·', '', 'middle', qg);
-    txt(600, y0+27, `q${idx}`, 'netlbl', 'start', grp);
-    const rw = el('path', {d:`M${cx},${y0+46} L${cx},${y0+rowH}`, 'class':'w stale'}, grp);
-    const rg = el('g', {'class':'badge stale'}, grp);
-    el('rect', {x:cx+12, y:y0+48, width:34, height:18, rx:4}, rg);
-    const rt = txt(cx+29, y0+57, '··', '', 'middle', rg);
-    if (k === n-1) txt(cx+56, y0+61, '← final remainder R', 'lbl', 'start', grp);
-    CASC.push({grp, t, bw, qw, qbadge:{g:qg, t:qt}, rw, rbadge:{g:rg, t:rt}});
+    const yo = CASC_TOP + k*CASC_SH, idx = n - 1 - k;
+    const st = {wires:{}, dots:{}, badges:{}, gates:{}, bound:null};
+    st.bound = el('rect', {x:26, y:yo, width:948, height:472, rx:12, 'class':'sbound'}, csvg);
+    txt(958, yo+26, `STAGE ${k} · bit b${idx}`, 'scap', 'end', csvg);
+    // the shared combinational fabric (identical to the clocked stage)
+    for (const [net, pts] of WIRES){
+      if (pts[0][0] >= 830) continue;                                          // register feedback — clocked only
+      if ((net === 'rout1' || net === 'rout0') && pts[1][0] === 760) continue; // FF D stubs — clocked only
+      addWire(st, net, pts.map(p => [p[0], p[1] + yo]));
+    }
+    addWire(st, 'r1', [[130, yo+101],[130, yo+416]]);   // r rails (were part of the feedback loop)
+    addWire(st, 'r0', [[160, yo+65],[160, yo+280]]);
+    addWire(st, 'rout1', [[664, yo+220],[740, yo+220]]);
+    addWire(st, 'rout0', [[664, yo+390],[720, yo+390]]);
+    for (const [net, x, y] of DOTS)
+      (st.dots[net] = st.dots[net] || []).push(el('circle', {cx:x, cy:y+yo, r:3.5, 'class':'dot stale'}, csvg));
+    for (const id of GATE_ORDER) gateGroup(GATES[id], yo, csvg, st.gates);
+    for (const net in BADGE_POS) for (const [x, y] of BADGE_POS[net]) addBadge(st, net, x, y+yo);
+    addBadge(st, 'q', 930, yo+110, 13);
+    addBadge(st, 'b', 100, yo+21, 'rect');
+    txt(66, yo+25, `b${idx}`, 'netlbl', 'end', csvg);
+    txt(126, yo+94, 'r1', 'netlbl', 'end', csvg);
+    txt(176, yo+58, 'r0', 'netlbl', 'start', csvg);
+    txt(268, yo+126, '¬b', 'lbl', 'middle', csvg);
+    txt(268, yo+196, '¬r1', 'lbl', 'middle', csvg);
+    txt(268, yo+266, '¬r0', 'lbl', 'middle', csvg);
+    txt(700, yo+98, 'q', 'netlbl', 'middle', csvg);
+    txt(700, yo+208, 'r1′', 'netlbl', 'middle', csvg);
+    txt(700, yo+378, 'r0′', 'netlbl', 'middle', csvg);
+    txt(930, yo+88, `q${idx}`, 'netlbl', 'middle', csvg);
+    txt(930, yo+134, '→ quotient', 'lbl2', 'middle', csvg);
+    if (k === 0){
+      addWire(st, 'r1', [[130, yo+60],[130, yo+101]]);
+      addWire(st, 'r0', [[160, yo+38],[160, yo+65]]);
+      addBadge(st, 'r1', 130, yo+52);
+      addBadge(st, 'r0', 160, yo+30);
+      txt(206, yo+44, 'initial remainder r = 00', 'lbl2', 'start', csvg);
+    } else {
+      txt(148, yo+92, 'from stage above', 'lbl2', 'start', csvg);
+    }
+    if (k === n-1){
+      txt(752, yo+224, 'final R₁', 'lbl', 'start', csvg);
+      txt(732, yo+394, 'final R₀', 'lbl', 'start', csvg);
+    }
+    STG.push(st);
   }
+  // inter-stage ripple wires: stage k's r′ IS stage k+1's r input — one net
+  for (let k = 0; k < n-1; k++){
+    const yo = CASC_TOP + k*CASC_SH;
+    addWire(STG[k+1], 'r1', [[740, yo+220],[740, yo+490],[130, yo+490],[130, yo+CASC_SH+101]]);
+    addWire(STG[k+1], 'r0', [[720, yo+390],[720, yo+505],[160, yo+505],[160, yo+CASC_SH+65]]);
+  }
+  // inputs are physically present from t=0 — only derived nets await the wave
+  STG.forEach((st, k) => paintNet(st, 'b', S.bits[k]));
+  paintNet(STG[0], 'r1', 0);
+  paintNet(STG[0], 'r0', 0);
+  $('#die').scrollTop = 0;
 }
 function settleStage(k){
   const b = S.bits[k], r1 = S.r1, r0 = S.r0;
@@ -598,16 +653,18 @@ function settleStage(k){
   S.nets = nets; updateEqs();
   hlTT(r1, r0, b);
   const v = (r1*2 + r0)*2 + b, rn = nets.rout1*2 + nets.rout0;
-  const st = CASC[k];
-  CASC.forEach((s, j) => s.grp.classList.toggle('hot', j === k));
-  st.grp.classList.add('done');
-  st.t.textContent = `r=${r1}${r0}  b=${b}  v=${bin(v,3)}(${v})  →  q=${nets.q}  r′=${bin(rn,2)}`;
-  st.qw.setAttribute('class', 'w ' + (nets.q ? 'on' : 'off'));
-  st.qbadge.g.setAttribute('class', 'badge ' + (nets.q ? 'b1' : 'b0'));
-  st.qbadge.t.textContent = nets.q;
-  st.rw.setAttribute('class', 'w ' + (rn ? 'on' : 'off'));
-  st.rbadge.g.setAttribute('class', 'badge ' + (rn ? 'b1' : 'b0'));
-  st.rbadge.t.textContent = bin(rn, 2);
+  STG.forEach((s, j) => s.bound.setAttribute('class', 'sbound' + (j < k ? ' done' : j === k ? ' hot' : '')));
+  const st = STG[k];
+  for (const net of ['b','r1','r0']) paintNet(st, net, nets[net]);
+  for (const net of DERIVED){ paintNet(st, net, nets[net]); pulseStore(st, net); }
+  for (const id of GATE_ORDER){
+    const g = st.gates[GATES[id].out];
+    g.classList.remove('flash'); void g.getBoundingClientRect(); g.classList.add('flash');
+  }
+  if (k + 1 < S.width){
+    paintNet(STG[k+1], 'r1', nets.rout1); pulseStore(STG[k+1], 'r1');
+    paintNet(STG[k+1], 'r0', nets.rout0); pulseStore(STG[k+1], 'r0');
+  }
   $('#bits').children[k].classList.add('used');
   S.qbits[k] = nets.q;
   const qc = $('#qbits').children[k];
@@ -617,7 +674,9 @@ function settleStage(k){
   $('#stB').textContent = b; $('#stV').textContent = `${bin(v,3)} (${v})`; $('#stQb').textContent = nets.q;
   S.i = k + 1;
   status();
-  if (S.i >= S.width){ st.grp.classList.remove('hot'); finish(); }
+  const die = $('#die');   // follow the wave — scroll only the die box, never the page
+  die.scrollTo({top: (CASC_TOP + k*CASC_SH)/CASC_H * die.scrollHeight - die.clientHeight*0.2, behavior:'smooth'});
+  if (S.i >= S.width){ st.bound.setAttribute('class', 'sbound done'); finish(); }
 }
 
 /* ============================== PHASES ============================== */
@@ -733,18 +792,21 @@ $('#bRst').onclick = reset;
 $('#bRnd').onclick = () => setN(Math.floor(Math.random() * 2 ** S.width));
 $('#inN').onchange = e => setN(+e.target.value);
 $('#inW').onchange = e => { S.width = +e.target.value; setN(S.N); };
-$('#inM').onchange = e => {
-  S.mode = e.target.value;
-  const clk = S.mode === 'clock';
+function setMode(m){
+  S.mode = m;
+  const clk = m === 'clock';
+  $('#inM').value = m;
   svg.style.display = clk ? '' : 'none';
   csvg.style.display = clk ? 'none' : '';
+  $('#die').classList.toggle('comb', !clk);
   $('#phind').style.display = clk ? '' : 'none';
   $('#bPh').textContent = clk ? '▸ phase' : '▸ stage';
   $('#bCy').style.display = clk ? '' : 'none';
   $('#stStepLbl').textContent = clk ? 'cycle' : 'stage';
   $('#stRLbl').textContent = clk ? 'remainder reg r' : 'remainder r (ripple)';
   reset();
-};
+}
+$('#inM').onchange = e => setMode(e.target.value);
 $('#inS').oninput  = e => { speed = +e.target.value; $('#sV').textContent = '×' + speed.toFixed(2); };
 document.addEventListener('keydown', e => {
   if (/INPUT|SELECT/.test(e.target.tagName)) return;
@@ -791,6 +853,7 @@ function selfTest(){
 buildTT();
 selfTest();
 setN(181);
+setMode('comb');   // no-clock cascade is the default view
 </script>
 </body>
 </html>
