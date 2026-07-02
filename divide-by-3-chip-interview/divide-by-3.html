@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DIV3 — divide-by-3 chip · digit recurrence</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚙️</text></svg>">
+<style>
+:root{
+  --bg:#04060c; --card:#0a111e; --edge:#1c2c40;
+  --hi:#38e8ff; --lo:#3d4f63; --stale:#1b2433;
+  --txt:#c7d7e6; --dim:#7d92a8; --pink:#ff4fd8; --green:#4ade80; --amber:#fbbf24; --red:#f87171;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--txt);
+  height:100vh; height:100dvh; overflow:hidden;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px;
+  display:flex; flex-direction:column;
+}
+header{
+  display:flex; align-items:center; gap:16px; padding:6px 14px;
+  border-bottom:1px solid var(--edge); background:linear-gradient(180deg,#0a1322,#060b14);
+}
+#ttl{font-size:15px; letter-spacing:1px}
+#ttl b{color:var(--hi); text-shadow:0 0 8px rgba(56,232,255,.6)}
+.led{padding:3px 10px; border-radius:20px; border:1px solid var(--edge); font-size:11px; letter-spacing:1px}
+.led.ok{color:var(--green); border-color:var(--green); box-shadow:0 0 8px rgba(74,222,128,.35)}
+.led.bad{color:var(--red); border-color:var(--red)}
+#keys{margin-left:auto; color:var(--dim); font-size:11px}
+#controls{
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:5px 14px; border-bottom:1px solid var(--edge); background:#070d17;
+}
+#controls label{display:flex; align-items:center; gap:6px; color:var(--dim)}
+input[type=number]{width:90px}
+input,select{
+  background:#0d1626; color:var(--txt); border:1px solid #2a3d55; border-radius:6px; padding:4px 6px;
+  font-family:inherit; font-size:13px;
+}
+button{
+  background:#122036; color:var(--txt); border:1px solid #2f4763; border-radius:6px;
+  padding:5px 12px; font-family:inherit; font-size:13px; cursor:pointer;
+}
+button:hover{border-color:var(--hi); color:#eafcff}
+button.primary{background:#0d3543; border-color:var(--hi); color:var(--hi)}
+.sep{width:1px; height:22px; background:var(--edge)}
+#main{
+  display:grid; grid-template-columns:minmax(560px,1fr) 390px; gap:8px;
+  padding:8px 12px 10px; flex:1; min-height:0; overflow:hidden;
+}
+.card{background:var(--card); border:1px solid var(--edge); border-radius:10px; padding:8px}
+#chipcol{display:flex; flex-direction:column; gap:6px; min-width:0; min-height:0}
+#panel{display:flex; flex-direction:column; gap:6px; min-height:0; overflow-y:auto}
+h3{margin:0 0 8px; font-size:11px; letter-spacing:2px; color:var(--dim); font-weight:600}
+/* bit conveyor + quotient */
+.convey{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.clab{color:var(--dim); font-size:11px; letter-spacing:1px; white-space:nowrap}
+.bitrow{display:flex; gap:4px}
+.bit{
+  width:27px; height:30px; display:flex; align-items:center; justify-content:center;
+  border:1px solid #2a3d55; border-radius:6px; background:#0d1626; font-size:14px; user-select:none;
+}
+#bits .bit{cursor:pointer}
+#bits .bit:hover{border-color:var(--hi)}
+.bit.cur{border-color:var(--hi); color:var(--hi); box-shadow:0 0 10px rgba(56,232,255,.55); transform:translateY(-2px)}
+.bit.used{opacity:.3}
+.bit.qset{border-color:var(--green); color:var(--green); box-shadow:0 0 8px rgba(74,222,128,.4); animation:drop .35s ease-out}
+.bit.rset{border-color:var(--amber); color:var(--amber); box-shadow:0 0 8px rgba(251,191,36,.4); animation:drop .35s ease-out}
+@keyframes drop{from{transform:translateY(-10px); opacity:0}}
+#deceq{color:var(--dim)}
+/* phase indicator */
+#phind{display:flex; gap:6px; align-items:center; padding:0 2px}
+#phind span{
+  flex:1; text-align:center; padding:3px 0; font-size:10px; letter-spacing:2px;
+  border:1px solid var(--edge); border-radius:6px; color:#54687e; background:#080f1b;
+}
+#phind span.act{color:var(--hi); border-color:var(--hi); box-shadow:0 0 8px rgba(56,232,255,.4); background:#0c2531}
+#phind span.clk.act{color:var(--pink); border-color:var(--pink); box-shadow:0 0 8px rgba(255,79,216,.4); background:#2a0c25}
+/* the die */
+#die{
+  padding:4px; flex:1; min-height:0; overflow:hidden;
+  display:flex; align-items:center; justify-content:center;
+  background:
+    repeating-linear-gradient(0deg,transparent 0 19px,rgba(56,120,180,.06) 19px 20px),
+    repeating-linear-gradient(90deg,transparent 0 19px,rgba(56,120,180,.06) 19px 20px),
+    radial-gradient(120% 100% at 50% 0%,#0b1424 0%,#060b14 70%);
+}
+svg{width:100%; height:100%; display:block}
+/* wires */
+.w{fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; transition:stroke .15s}
+.w.on{stroke:var(--hi); filter:drop-shadow(0 0 3px rgba(56,232,255,.8))}
+.w.off{stroke:var(--lo)}
+.w.stale{stroke:var(--stale)}
+.flow{fill:none; stroke:#d9fbff; stroke-width:2.2; stroke-dasharray:5 11; opacity:0; pointer-events:none}
+.flow.go{opacity:.8; animation:march .5s linear infinite}
+@keyframes march{to{stroke-dashoffset:-16}}
+.pulse{fill:none; stroke:#fff; stroke-width:3; opacity:0; pointer-events:none; filter:drop-shadow(0 0 6px var(--hi))}
+.dot{stroke:none}
+.dot.on{fill:var(--hi)} .dot.off{fill:var(--lo)} .dot.stale{fill:var(--stale)}
+/* gates */
+.gate{fill:#0c1424; stroke:#4a6480; stroke-width:1.6; transition:stroke .15s}
+g.gt.on .gate{stroke:var(--hi); filter:drop-shadow(0 0 5px rgba(56,232,255,.55))}
+g.gt.off .gate{stroke:#5b7a94}
+g.gt.flash .gate{animation:gflash .5s ease-out}
+@keyframes gflash{0%{stroke:#fff; filter:drop-shadow(0 0 12px #fff)}}
+text{font-family:inherit}
+#trwrap{max-height:230px; overflow-y:auto}
+.lbl{fill:#647d96; font-size:10px}
+.lbl2{fill:#42566c; font-size:9px}
+.netlbl{fill:#8fb8d0; font-size:11px}
+/* badges */
+.badge rect,.badge circle{fill:#0a1322; stroke:#2c405a; transition:all .15s}
+.badge.b1 rect,.badge.b1 circle{stroke:var(--hi); fill:#0e2a36; filter:drop-shadow(0 0 4px rgba(56,232,255,.7))}
+.badge text{fill:#e8f6ff; font-size:11px; text-anchor:middle; dominant-baseline:central}
+.badge.b1 text{fill:var(--hi)}
+.badge.stale text{fill:#48586c}
+/* flip-flops */
+.ffbox{fill:#0d1626; stroke:#4a6480; stroke-width:1.6}
+g.ff.latch .ffbox{animation:ffl .5s ease-out}
+@keyframes ffl{0%{stroke:var(--pink); filter:drop-shadow(0 0 12px var(--pink))}}
+.ffval{fill:var(--amber); font-size:19px; text-anchor:middle; dominant-baseline:central; text-shadow:0 0 6px rgba(251,191,36,.5)}
+.ffpin{fill:#647d96; font-size:9px}
+.clkw{fill:none; stroke:#4a6480; stroke-width:1.4}
+g.ff.latch .clkw{stroke:var(--pink)}
+/* panel widgets */
+.strow{display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px dashed #14202f}
+.strow b{color:#eaf6ff; font-weight:600}
+.strow b.big{color:var(--hi); font-size:15px}
+#eqs .eq{padding:3px 0; color:#5d7188; letter-spacing:.5px}
+#eqs .eq .nm{color:#9db4c9}
+.lit1{color:var(--hi); text-shadow:0 0 6px rgba(56,232,255,.5)}
+.lit0{color:#5d7188}
+.litx{color:#3a4a5c}
+.res{padding:0 5px; border:1px solid var(--edge); border-radius:4px; margin-left:4px}
+.res.lit1{border-color:var(--hi)}
+table{border-collapse:collapse; width:100%}
+th,td{padding:2px 6px; text-align:center; font-size:12px; border-bottom:1px solid #101a29}
+th{color:var(--dim); font-weight:600; font-size:10px; letter-spacing:1px}
+tr.hl td{background:#0c2531; color:var(--hi)}
+tr.na td{opacity:.32}
+tr.live td{color:var(--amber)}
+tr.done td:nth-child(6){color:var(--green)}
+.fn{color:#4b6076; font-size:11px; margin-top:6px; line-height:1.5}
+/* banner */
+#banner{
+  display:none; margin-top:2px; padding:10px 14px; text-align:center; font-size:16px;
+  border:1px solid var(--green); border-radius:10px; color:var(--green);
+  background:#07160f; box-shadow:0 0 18px rgba(74,222,128,.25) inset, 0 0 12px rgba(74,222,128,.25);
+}
+#banner.show{display:block; animation:drop .4s ease-out}
+#banner.bad{border-color:var(--red); color:var(--red); background:#170808; box-shadow:none}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+@media (max-width:1080px){ /* stacked layout: allow normal page scroll again */
+  body{height:auto; min-height:100vh; overflow:auto}
+  #main{grid-template-columns:1fr; overflow:visible}
+  #panel{overflow:visible}
+  #die{min-height:420px}
+}
+</style>
+</head>
+<body>
+<header>
+  <div id="ttl">⚡ <b>DIV3</b> · divide-by-3 chip · digit recurrence (restoring long division)</div>
+  <div id="stled" class="led">SELF-TEST …</div>
+  <div id="keys">space run&nbsp;·&nbsp;p phase&nbsp;·&nbsp;c cycle&nbsp;·&nbsp;r reset</div>
+</header>
+
+<div id="controls">
+  <label>N <input id="inN" type="number" min="0" value="181"></label>
+  <label>width <select id="inW">
+    <option>4</option><option selected>8</option><option>12</option><option>16</option>
+  </select></label>
+  <button id="bRnd" title="random N">⚄ random</button>
+  <span class="sep"></span>
+  <button id="bRun" class="primary">▶ run</button>
+  <button id="bPh" title="advance one propagation phase">▸ phase</button>
+  <button id="bCy" title="finish the current clock cycle">▸▸ cycle</button>
+  <button id="bRst">⟲ reset</button>
+  <span class="sep"></span>
+  <label>speed <input id="inS" type="range" min="0.25" max="4" step="0.05" value="1"><span id="sV">×1.00</span></label>
+</div>
+
+<div id="main">
+  <div id="chipcol">
+    <div class="convey card">
+      <span class="clab">INPUT N&nbsp;(MSB→LSB, click bits to edit)</span>
+      <div class="bitrow" id="bits"></div>
+      <span id="deceq"></span>
+    </div>
+    <div id="phind">
+      <span data-p="0">INPUTS</span><span data-p="1">NOT</span><span data-p="2">AND</span>
+      <span data-p="3">OR</span><span data-p="4" class="clk">CLK ⇧</span>
+    </div>
+    <div id="die" class="card"><svg id="svg" viewBox="0 0 1000 620" aria-label="gate-level schematic of the divide-by-3 stage"></svg></div>
+    <div class="convey card">
+      <span class="clab">QUOTIENT Q</span><div class="bitrow" id="qbits"></div>
+      <span class="clab">REMAINDER R</span><div class="bitrow" id="rbits"></div>
+    </div>
+    <div id="banner" aria-live="polite"></div>
+  </div>
+
+  <div id="panel">
+    <div class="card"><h3>STATUS</h3><div id="status">
+      <div class="strow"><span>N</span><b id="stN"></b></div>
+      <div class="strow"><span>cycle</span><b id="stStep"></b></div>
+      <div class="strow"><span>input bit b</span><b id="stB" class="big">—</b></div>
+      <div class="strow"><span>remainder reg r</span><b id="stR" class="big"></b></div>
+      <div class="strow"><span>window v = (r≪1)|b</span><b id="stV" class="big">—</b></div>
+      <div class="strow"><span>quotient bit q</span><b id="stQb" class="big">—</b></div>
+      <div class="strow"><span>Q so far</span><b id="stQ"></b></div>
+    </div></div>
+
+    <div class="card"><h3>GATE EQUATIONS · LIVE</h3><div id="eqs">
+      <div class="eq"><span class="nm">q&nbsp;&nbsp;</span>= <span data-net="r1">r1</span> ∨ (<span data-net="r0">r0</span>∧<span data-net="b">b</span>)<span class="res" data-net="q" data-res="1">·</span></div>
+      <div class="eq"><span class="nm">r1′</span>= (<span data-net="r1" data-neg="1">¬r1</span>∧<span data-net="r0">r0</span>∧<span data-net="b" data-neg="1">¬b</span>) ∨ (<span data-net="r1">r1</span>∧<span data-net="r0" data-neg="1">¬r0</span>∧<span data-net="b">b</span>)<span class="res" data-net="rout1" data-res="1">·</span></div>
+      <div class="eq"><span class="nm">r0′</span>= (<span data-net="r1" data-neg="1">¬r1</span>∧<span data-net="r0" data-neg="1">¬r0</span>∧<span data-net="b">b</span>) ∨ (<span data-net="r1">r1</span>∧<span data-net="r0" data-neg="1">¬r0</span>∧<span data-net="b" data-neg="1">¬b</span>)<span class="res" data-net="rout0" data-res="1">·</span></div>
+    </div></div>
+
+    <div class="card"><h3>STAGE TRUTH TABLE · computed from the netlist</h3>
+      <table id="tt"><thead><tr><th>r1</th><th>r0</th><th>b</th><th>v</th><th>q</th><th>r1′</th><th>r0′</th></tr></thead><tbody></tbody></table>
+      <div class="fn">* r=11 can never occur (remainder &lt; 3)</div>
+    </div>
+
+    <div class="card"><h3>LONG-DIVISION TRACE</h3><div id="trwrap">
+      <table><thead><tr><th>#</th><th>b</th><th>r</th><th>v</th><th>v≥3</th><th>q</th><th>r′</th></tr></thead><tbody id="trb"></tbody></table>
+    </div></div>
+
+    <div class="card fn">Each clock the chip slides one bit of N into the 3-bit window
+    <b>v=(r≪1)|b</b>. Since r&lt;3, v≤5, so the quotient digit is a single bit:
+    v≥3 → q=1, r′=v−3, else q=0, r′=v. The comparison and subtraction are baked into
+    the NOT/AND/OR gates you see — no arithmetic unit anywhere.</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============================== NETLIST ==============================
+   Every gate is evaluated individually — the simulator never computes
+   v>=3 arithmetic except in the self-test reference model. */
+const GATES = {
+  n_b :{type:'NOT', ins:['b'],              out:'nb',    x:214, y:140},
+  n_1 :{type:'NOT', ins:['r1'],             out:'n1',    x:214, y:210},
+  n_0 :{type:'NOT', ins:['r0'],             out:'n0',    x:214, y:280},
+  a_q :{type:'AND', ins:['r0','b'],         out:'a_q',   x:445, y:74,  lbl:'r0·b'},
+  a_h1:{type:'AND', ins:['n1','r0','nb'],   out:'a_h1',  x:445, y:180, lbl:'¬r1·r0·¬b'},
+  a_h2:{type:'AND', ins:['r1','n0','b'],    out:'a_h2',  x:445, y:260, lbl:'r1·¬r0·b'},
+  a_l1:{type:'AND', ins:['n1','n0','b'],    out:'a_l1',  x:445, y:350, lbl:'¬r1·¬r0·b'},
+  a_l2:{type:'AND', ins:['r1','n0','nb'],   out:'a_l2',  x:445, y:430, lbl:'r1·¬r0·¬b'},
+  o_q :{type:'OR',  ins:['r1','a_q'],       out:'q',     x:608, y:110},
+  o_h :{type:'OR',  ins:['a_h1','a_h2'],    out:'rout1', x:608, y:220},
+  o_l :{type:'OR',  ins:['a_l1','a_l2'],    out:'rout0', x:608, y:390},
+};
+const GATE_ORDER = ['n_b','n_1','n_0','a_q','a_h1','a_h2','a_l1','a_l2','o_q','o_h','o_l'];
+const PHASE_GATES = {1:['n_b','n_1','n_0'], 2:['a_q','a_h1','a_h2','a_l1','a_l2'], 3:['o_q','o_h','o_l']};
+const DERIVED = ['nb','n1','n0','a_q','a_h1','a_h2','a_l1','a_l2','q','rout1','rout0'];
+
+function evalGate(g, nets){
+  const v = g.ins.map(n => nets[n]);
+  if (g.type === 'NOT') return v[0] ^ 1;
+  if (g.type === 'AND') return v.every(x => x === 1) ? 1 : 0;
+  return v.some(x => x === 1) ? 1 : 0;          // OR
+}
+// pure combinational stage: (r1,r0,b) -> {q, r1n, r0n}, gates only
+function netlistStep(r1, r0, b){
+  const nets = {r1, r0, b};
+  for (const id of GATE_ORDER) nets[GATES[id].out] = evalGate(GATES[id], nets);
+  return {q: nets.q, r1n: nets.rout1, r0n: nets.rout0};
+}
+
+/* ============================== GEOMETRY ============================== */
+const WIRES = [ // [net, points src→dst] — pulse animation follows point order
+  ['b',    [[100,34],[100,364]]],
+  ['b',    [[100,140],[214,140]]],
+  ['b',    [[100,83],[445,83]]],
+  ['b',    [[100,274],[445,274]]],
+  ['b',    [[100,364],[445,364]]],
+  ['r1',   [[830,220],[880,220],[880,560],[130,560],[130,101]]],   // feedback loop
+  ['r1',   [[130,101],[612,101]]],
+  ['r1',   [[130,210],[214,210]]],
+  ['r1',   [[130,246],[445,246]]],
+  ['r1',   [[130,416],[445,416]]],
+  ['r0',   [[830,390],[905,390],[905,585],[160,585],[160,65]]],    // feedback loop
+  ['r0',   [[160,65],[445,65]]],
+  ['r0',   [[160,180],[445,180]]],
+  ['r0',   [[160,280],[214,280]]],
+  ['nb',   [[250,140],[310,140],[310,444]]],
+  ['nb',   [[310,194],[445,194]]],
+  ['nb',   [[310,444],[445,444]]],
+  ['n1',   [[250,210],[340,210]]],
+  ['n1',   [[340,166],[340,336]]],
+  ['n1',   [[340,166],[445,166]]],
+  ['n1',   [[340,336],[445,336]]],
+  ['n0',   [[250,280],[370,280]]],
+  ['n0',   [[370,260],[370,430]]],
+  ['n0',   [[370,260],[445,260]]],
+  ['n0',   [[370,350],[445,350]]],
+  ['n0',   [[370,430],[445,430]]],
+  ['a_q',  [[497,74],[560,74],[560,119],[614,119]]],
+  ['a_h1', [[497,180],[560,180],[560,211],[614,211]]],
+  ['a_h2', [[497,260],[575,260],[575,229],[614,229]]],
+  ['a_l1', [[497,350],[560,350],[560,381],[614,381]]],
+  ['a_l2', [[497,430],[575,430],[575,399],[614,399]]],
+  ['q',    [[664,110],[917,110]]],
+  ['rout1',[[664,220],[760,220]]],
+  ['rout0',[[664,390],[760,390]]],
+];
+const DOTS = [ // junction dots [net,x,y]
+  ['b',100,83],['b',100,140],['b',100,274],
+  ['r1',130,210],['r1',130,246],['r1',130,416],
+  ['r0',160,180],['r0',160,280],
+  ['nb',310,194],['n1',340,210],['n0',370,280],['n0',370,350],
+];
+const BADGE_POS = { // small live value bubbles [x,y] (per net, may be several)
+  nb:[[268,140]], n1:[[268,210]], n0:[[268,280]],
+  a_q:[[516,74]], a_h1:[[516,180]], a_h2:[[516,260]], a_l1:[[516,350]], a_l2:[[516,430]],
+  q:[[680,110],[930,110]], rout1:[[680,220]], rout0:[[680,390]],
+};
+
+/* ============================== SVG BUILD ============================== */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = s => document.querySelector(s);
+function el(tag, attrs, parent){
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function txt(x, y, s, cls, anchor, parent){
+  const t = el('text', {x, y, 'class':cls, 'text-anchor':anchor||'middle'}, parent);
+  t.textContent = s;
+  return t;
+}
+const svg = $('#svg');
+const gWires = el('g',{},svg), gDots = el('g',{},svg), gGates = el('g',{},svg),
+      gMisc = el('g',{},svg), gBadges = el('g',{},svg);
+
+const WIRE_ELS = {}, DOT_ELS = {}, BADGE_ELS = {}, GATE_ELS = {};
+for (const [net, pts] of WIRES){
+  const d = 'M' + pts.map(p => p.join(',')).join(' L');
+  const base  = el('path', {d, 'class':'w stale'}, gWires);
+  const flow  = el('path', {d, 'class':'flow'},   gWires);
+  const pulse = el('path', {d, 'class':'pulse'},  gWires);
+  (WIRE_ELS[net] = WIRE_ELS[net] || []).push({base, flow, pulse});
+}
+for (const [net, x, y] of DOTS)
+  (DOT_ELS[net] = DOT_ELS[net] || []).push(el('circle',{cx:x, cy:y, r:3.5, 'class':'dot stale'}, gDots));
+
+function gateGroup(id, g){
+  const grp = el('g', {'class':'gt stale'}, gGates);
+  const x = g.x, cy = g.y;
+  if (g.type === 'NOT'){
+    el('path', {d:`M${x},${cy-13} L${x+26},${cy} L${x},${cy+13} Z`, 'class':'gate'}, grp);
+    el('circle', {cx:x+31, cy, r:5, 'class':'gate'}, grp);
+  } else if (g.type === 'AND'){
+    const hh = g.ins.length === 3 ? 22 : 18;
+    el('path', {d:`M${x},${cy-hh} H${x+30} A${hh},${hh} 0 0 1 ${x+30},${cy+hh} H${x} Z`, 'class':'gate'}, grp);
+    if (g.lbl) txt(x+26, cy-hh-6, g.lbl, 'lbl', 'middle', grp);
+  } else { // OR
+    const hh = 20, w = 56;
+    el('path', {d:`M${x},${cy-hh} Q${x+w*0.62},${cy-hh} ${x+w},${cy} Q${x+w*0.62},${cy+hh} ${x},${cy+hh} Q${x+15},${cy} ${x},${cy-hh} Z`, 'class':'gate'}, grp);
+  }
+  GATE_ELS[g.out] = grp;
+  return grp;
+}
+for (const id of GATE_ORDER) gateGroup(id, GATES[id]);
+
+// input pad b
+{
+  const grp = el('g', {'class':'badge stale'}, gBadges);
+  el('rect', {x:78, y:8, width:44, height:26, rx:5}, grp);
+  const t = txt(100, 21, '·', '', 'middle', grp);
+  (BADGE_ELS.b = []).push({g:grp, t});
+  txt(66, 25, 'b', 'netlbl', 'end', gMisc);
+  txt(112, 52, 'input bit (from N, MSB first)', 'lbl2', 'start', gMisc);
+}
+// net labels
+txt(126, 94, 'r1', 'netlbl', 'end', gMisc);
+txt(268, 126, '¬b', 'lbl', 'middle', gMisc);
+txt(268, 196, '¬r1', 'lbl', 'middle', gMisc);
+txt(268, 266, '¬r0', 'lbl', 'middle', gMisc);
+txt(700, 98,  'q', 'netlbl', 'middle', gMisc);
+txt(700, 208, 'r1′', 'netlbl', 'middle', gMisc);
+txt(700, 378, 'r0′', 'netlbl', 'middle', gMisc);
+txt(505, 552, 'r1 feedback', 'lbl2', 'middle', gMisc);
+txt(505, 577, 'r0 feedback', 'lbl2', 'middle', gMisc);
+txt(930, 88, 'q', 'netlbl', 'middle', gMisc);
+txt(930, 134, '→ quotient', 'lbl2', 'middle', gMisc);
+txt(988, 612, 'DIV3 rev A · NOT→AND→OR netlist', 'lbl2', 'end', gMisc);
+// q output pad (big badge)
+{
+  const grp = el('g', {'class':'badge stale'}, gBadges);
+  el('circle', {cx:930, cy:110, r:13}, grp);
+  const t = txt(930, 110, '·', '', 'middle', grp);
+  grp.querySelector('text').setAttribute('font-size', 13);
+  BADGE_POS.q = [[680,110]];             // circle above replaces the 930 entry
+  (BADGE_ELS.q = BADGE_ELS.q || []).push({g:grp, t});
+}
+// small badges
+for (const net in BADGE_POS){
+  for (const [x, y] of BADGE_POS[net]){
+    const grp = el('g', {'class':'badge stale'}, gBadges);
+    el('circle', {cx:x, cy:y, r:8.5}, grp);
+    const t = txt(x, y, '·', '', 'middle', grp);
+    (BADGE_ELS[net] = BADGE_ELS[net] || []).push({g:grp, t});
+  }
+}
+// flip-flops
+const FF_ELS = {};
+function makeFF(name, cy, cap){
+  const grp = el('g', {'class':'ff'}, gMisc);
+  el('rect', {x:760, y:cy-28, width:70, height:56, rx:6, 'class':'ffbox'}, grp);
+  txt(795, cy-34, cap, 'lbl', 'middle', grp);
+  txt(766, cy, 'D', 'ffpin', 'start', grp);
+  txt(824, cy, 'Q', 'ffpin', 'end', grp);
+  el('path', {d:`M${787},${cy+28} L${795},${cy+21} L${803},${cy+28}`, 'class':'clkw'}, grp);
+  const v = txt(795, cy, '0', 'ffval', 'middle', grp);
+  FF_ELS[name] = {grp, v};
+}
+makeFF('r1', 220, 'R1 · remainder MSB');
+makeFF('r0', 390, 'R0 · remainder LSB');
+
+/* ============================== STATE + UI ============================== */
+const S = {width:8, N:181, bits:[], i:0, r1:0, r0:0, qbits:[], phase:0, nets:{}, running:false};
+let gen = 0, busy = false, speed = 1;
+const BASE = 520;
+const dur = () => BASE / speed;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const bin = (v, w) => v.toString(2).padStart(w, '0');
+
+function updateEqs(){
+  document.querySelectorAll('#eqs [data-net]').forEach(sp => {
+    const v = S.nets[sp.dataset.net];
+    let cls = 'litx', txt = null;
+    if (v !== undefined){
+      const lit = sp.dataset.neg ? v ^ 1 : v;
+      cls = lit ? 'lit1' : 'lit0';
+      if (sp.dataset.res) txt = String(v);
+    } else if (sp.dataset.res) txt = '·';
+    sp.className = (sp.dataset.res ? 'res ' : '') + cls;
+    if (txt !== null) sp.textContent = txt;
+  });
+}
+function updateNet(net){
+  const v = S.nets[net];
+  const cls = v === undefined ? 'stale' : v ? 'on' : 'off';
+  (WIRE_ELS[net] || []).forEach(w => {
+    w.base.setAttribute('class', 'w ' + cls);
+    w.flow.classList.toggle('go', v === 1);
+  });
+  (DOT_ELS[net] || []).forEach(d => d.setAttribute('class', 'dot ' + cls));
+  (BADGE_ELS[net] || []).forEach(b => {
+    b.g.setAttribute('class', 'badge ' + (v === undefined ? 'stale' : v ? 'b1' : 'b0'));
+    b.t.textContent = v === undefined ? '·' : v;
+  });
+  const g = GATE_ELS[net];
+  if (g){ g.classList.remove('stale','on','off'); g.classList.add(cls); }
+  updateEqs();
+}
+function pulseNet(net){
+  const d = dur() * 0.55;
+  (WIRE_ELS[net] || []).forEach(({pulse}) => {
+    const L = pulse.getTotalLength();
+    pulse.style.transition = 'none';
+    pulse.style.strokeDasharray = L + ' ' + L;
+    pulse.style.strokeDashoffset = L;
+    pulse.style.opacity = '0.9';
+    pulse.getBoundingClientRect();                       // flush
+    pulse.style.transition = `stroke-dashoffset ${d}ms ease-out, opacity 150ms ${Math.max(0,d-120)}ms`;
+    pulse.style.strokeDashoffset = '0';
+    pulse.style.opacity = '0';
+  });
+}
+function drive(net, v){ S.nets[net] = v; updateNet(net); pulseNet(net); }
+function flashGate(outNet){
+  const g = GATE_ELS[outNet];
+  g.classList.remove('flash'); void g.getBoundingClientRect();
+  g.classList.add('flash');
+}
+function setPhaseInd(p){
+  document.querySelectorAll('#phind span').forEach(s => s.classList.toggle('act', +s.dataset.p === p));
+}
+function status(){
+  $('#stN').textContent = `${S.N}  (${S.bits.join('')})`;
+  $('#stStep').textContent = `${Math.min(S.i, S.width)} / ${S.width}`;
+  $('#stR').textContent = `${S.r1}${S.r0}  (${S.r1*2 + S.r0})`;
+  const got = S.qbits.filter(x => x !== undefined);
+  $('#stQ').textContent = got.length ? `${got.join('')}…  (${parseInt(got.join(''),2) || 0})` : '—';
+}
+
+/* --- conveyor / quotient rows --- */
+function buildRows(){
+  const bb = $('#bits'); bb.innerHTML = '';
+  S.bits.forEach((b, k) => {
+    const d = document.createElement('div');
+    d.className = 'bit'; d.textContent = b;
+    d.onclick = () => { S.bits[k] ^= 1; S.N = S.bits.reduce((a,x) => a*2+x, 0); $('#inN').value = S.N; reset(); };
+    bb.appendChild(d);
+  });
+  $('#deceq').textContent = `= ${S.N}`;
+  const qb = $('#qbits'); qb.innerHTML = '';
+  for (let k = 0; k < S.width; k++){ const d = document.createElement('div'); d.className = 'bit'; d.textContent = '·'; qb.appendChild(d); }
+  const rb = $('#rbits'); rb.innerHTML = '';
+  for (let k = 0; k < 2; k++){ const d = document.createElement('div'); d.className = 'bit'; d.textContent = '·'; rb.appendChild(d); }
+}
+
+/* --- truth table (rendered FROM the netlist — visible proof) --- */
+function buildTT(){
+  const tb = $('#tt tbody'); tb.innerHTML = '';
+  for (let r1 = 0; r1 <= 1; r1++) for (let r0 = 0; r0 <= 1; r0++) for (let b = 0; b <= 1; b++){
+    const o = netlistStep(r1, r0, b), v = r1*4 + r0*2 + b;
+    const tr = document.createElement('tr');
+    tr.id = 'tt' + v;
+    if (r1 && r0) tr.className = 'na';
+    tr.innerHTML = `<td>${r1}</td><td>${r0}</td><td>${b}</td><td>${(r1*2+r0)*2+b}${r1&&r0?'*':''}</td>`
+                 + `<td>${o.q}</td><td>${o.r1n}</td><td>${o.r0n}</td>`;
+    tb.appendChild(tr);
+  }
+}
+function hlTT(r1, r0, b){
+  document.querySelectorAll('#tt tr.hl').forEach(t => t.classList.remove('hl'));
+  const row = $('#tt' + (r1*4 + r0*2 + b));
+  if (row) row.classList.add('hl');
+}
+
+/* --- trace table --- */
+let liveRow = null;
+function traceStart(i, b, r, v){
+  liveRow = document.createElement('tr');
+  liveRow.className = 'live';
+  liveRow.innerHTML = `<td>${i}</td><td>${b}</td><td>${bin(r,2)}</td><td>${bin(v,3)} (${v})</td>`
+                    + `<td>${v >= 3 ? '✓' : '·'}</td><td>?</td><td>?</td>`;
+  $('#trb').appendChild(liveRow);
+  liveRow.scrollIntoView({block:'nearest'});
+}
+function traceQ(q){ if (liveRow) liveRow.cells[5].textContent = q; }
+function traceEnd(rn){
+  if (!liveRow) return;
+  liveRow.cells[6].textContent = bin(rn, 2);
+  liveRow.className = 'done';
+  liveRow = null;
+}
+
+/* ============================== PHASES ============================== */
+const PHASES = [
+  function ph0(){ // present inputs
+    setPhaseInd(0);
+    for (const n of DERIVED){ delete S.nets[n]; updateNet(n); }
+    const b = S.bits[S.i];
+    drive('b', b); drive('r1', S.r1); drive('r0', S.r0);
+    document.querySelectorAll('#bits .bit').forEach((d, k) => d.classList.toggle('cur', k === S.i));
+    hlTT(S.r1, S.r0, b);
+    const v = (S.r1*2 + S.r0)*2 + b;
+    $('#stB').textContent = b; $('#stV').textContent = `${bin(v,3)} (${v})`; $('#stQb').textContent = '—';
+    traceStart(S.i, b, S.r1*2 + S.r0, v);
+    status();
+  },
+  function ph1(){ setPhaseInd(1); firePhase(1); },
+  function ph2(){ setPhaseInd(2); firePhase(2); },
+  function ph3(){ // ORs -> outputs valid
+    setPhaseInd(3); firePhase(3);
+    $('#stQb').textContent = S.nets.q;
+    traceQ(S.nets.q);
+  },
+  function ph4(){ // rising clock edge
+    setPhaseInd(4);
+    S.r1 = S.nets.rout1; S.r0 = S.nets.rout0;
+    for (const n of ['r1','r0']){
+      FF_ELS[n].v.textContent = S[n];
+      FF_ELS[n].grp.classList.remove('latch'); void FF_ELS[n].grp.getBoundingClientRect();
+      FF_ELS[n].grp.classList.add('latch');
+    }
+    S.qbits[S.i] = S.nets.q;
+    const qc = $('#qbits').children[S.i];
+    qc.textContent = S.nets.q; qc.classList.add('qset');
+    const bc = $('#bits').children[S.i];
+    bc.classList.remove('cur'); bc.classList.add('used');
+    traceEnd(S.r1*2 + S.r0);
+    S.i++;
+    status();
+    if (S.i >= S.width) finish();
+  },
+];
+function firePhase(p){
+  for (const id of PHASE_GATES[p]){
+    const g = GATES[id];
+    drive(g.out, evalGate(g, S.nets));
+    flashGate(g.out);
+  }
+}
+function finished(){ return S.i >= S.width; }
+function finish(){
+  S.running = false; setRunBtn();
+  const Q = parseInt(S.qbits.join(''), 2), R = S.r1*2 + S.r0;
+  [...$('#rbits').children].forEach((c, k) => { c.textContent = k ? S.r0 : S.r1; c.classList.add('rset'); });
+  const ok = 3*Q + R === S.N && R < 3;
+  const bn = $('#banner');
+  bn.className = 'show' + (ok ? '' : ' bad');
+  bn.textContent = ok
+    ? `✓  ${S.N} = 3 × ${Q} + ${R}   ·   Q = ${bin(Q, S.width)}   R = ${bin(R,2)}`
+    : `✗  check failed: 3×${Q}+${R} ≠ ${S.N}`;
+  setPhaseInd(-1);
+}
+
+/* ============================== RUNNER ============================== */
+function setRunBtn(){ $('#bRun').textContent = S.running ? '⏸ pause' : '▶ run'; }
+function advance(){ PHASES[S.phase](); S.phase = (S.phase + 1) % 5; }
+async function runLoop(){
+  const g = gen; S.running = true; setRunBtn();
+  while (S.running && g === gen && !finished()){
+    advance();
+    await sleep(dur());
+  }
+  if (g === gen){ S.running = false; setRunBtn(); }
+}
+async function stepCycle(){
+  if (busy || S.running || finished()) return;
+  busy = true; const g = gen;
+  do { advance(); await sleep(dur()); } while (g === gen && S.phase !== 0);
+  busy = false;
+}
+function stepPhase(){ if (busy || S.running || finished()) return; advance(); }
+
+function reset(){
+  gen++; S.running = false; busy = false; setRunBtn();
+  S.i = 0; S.phase = 0; S.r1 = 0; S.r0 = 0; S.qbits = []; S.nets = {};
+  for (const n of ['b','r1','r0',...DERIVED]) updateNet(n);
+  FF_ELS.r1.v.textContent = '0'; FF_ELS.r0.v.textContent = '0';
+  buildRows();
+  $('#trb').innerHTML = ''; liveRow = null;
+  document.querySelectorAll('#tt tr.hl').forEach(t => t.classList.remove('hl'));
+  $('#banner').className = ''; $('#banner').textContent = '';
+  $('#stB').textContent = '—'; $('#stV').textContent = '—'; $('#stQb').textContent = '—';
+  setPhaseInd(-1);
+  status();
+}
+function setN(n){
+  const max = 2 ** S.width - 1;
+  S.N = Math.max(0, Math.min(max, Math.floor(n) || 0));
+  $('#inN').value = S.N; $('#inN').max = max;
+  S.bits = Array.from({length: S.width}, (_, k) => (S.N >> (S.width - 1 - k)) & 1);
+  reset();
+}
+
+/* ============================== CONTROLS ============================== */
+$('#bRun').onclick = () => { if (S.running){ S.running = false; setRunBtn(); } else if (!finished() && !busy) runLoop(); };
+$('#bPh').onclick  = stepPhase;
+$('#bCy').onclick  = stepCycle;
+$('#bRst').onclick = reset;
+$('#bRnd').onclick = () => setN(Math.floor(Math.random() * 2 ** S.width));
+$('#inN').onchange = e => setN(+e.target.value);
+$('#inW').onchange = e => { S.width = +e.target.value; setN(S.N); };
+$('#inS').oninput  = e => { speed = +e.target.value; $('#sV').textContent = '×' + speed.toFixed(2); };
+document.addEventListener('keydown', e => {
+  if (/INPUT|SELECT/.test(e.target.tagName)) return;
+  if (e.key === ' '){ e.preventDefault(); $('#bRun').click(); }
+  else if (e.key === 'p') stepPhase();
+  else if (e.key === 'c') stepCycle();
+  else if (e.key === 'r') reset();
+});
+
+/* ============================== SELF-TEST ==============================
+   1) every reachable (r,b) combo: netlist === arithmetic reference
+   2) 24 random full divisions driven purely by the gate netlist       */
+function selfTest(){
+  let ok = true;
+  for (let r = 0; r < 3; r++) for (let b = 0; b < 2; b++){
+    const v = r*2 + b;
+    const exp = v >= 3 ? {q:1, r:v-3} : {q:0, r:v};
+    const got = netlistStep(r >> 1, r & 1, b);
+    const pass = got.q === exp.q && got.r1n*2 + got.r0n === exp.r;
+    console.assert(pass, `combo r=${r} b=${b}: expected q=${exp.q} r=${exp.r}, got q=${got.q} r=${got.r1n*2+got.r0n}`);
+    ok = ok && pass;
+  }
+  for (let t = 0; t < 24; t++){
+    const w = [4, 8, 12, 16][t % 4];
+    const N = Math.floor(Math.random() * 2 ** w);
+    let r1 = 0, r0 = 0, Q = 0;
+    for (let k = w - 1; k >= 0; k--){
+      const o = netlistStep(r1, r0, (N >> k) & 1);
+      Q = Q*2 + o.q; r1 = o.r1n; r0 = o.r0n;
+    }
+    const R = r1*2 + r0;
+    const pass = 3*Q + R === N && R < 3 && Q === Math.floor(N/3);
+    console.assert(pass, `division ${N}/3: got Q=${Q} R=${R}`);
+    ok = ok && pass;
+  }
+  const led = $('#stled');
+  led.textContent = ok ? 'SELF-TEST ✓ 6 combos · 24 divisions' : 'SELF-TEST ✗ see console';
+  led.classList.add(ok ? 'ok' : 'bad');
+  console.log(ok ? '[DIV3] self-test passed' : '[DIV3] SELF-TEST FAILED');
+  return ok;
+}
+
+/* ============================== INIT ============================== */
+buildTT();
+selfTest();
+setN(181);
+</script>
+</body>
+</html>
