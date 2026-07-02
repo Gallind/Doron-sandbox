@@ -33,7 +33,8 @@ header{
   padding:5px 14px; border-bottom:1px solid var(--edge); background:#070d17;
 }
 #controls label{display:flex; align-items:center; gap:6px; color:var(--dim)}
-input[type=number]{width:90px}
+#inN{width:170px}
+.strow b{word-break:break-all; margin-left:10px}
 input,select{
   background:#0d1626; color:var(--txt); border:1px solid #2a3d55; border-radius:6px; padding:4px 6px;
   font-family:inherit; font-size:13px;
@@ -56,7 +57,7 @@ h3{margin:0 0 8px; font-size:11px; letter-spacing:2px; color:var(--dim); font-we
 /* bit conveyor + quotient */
 .convey{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
 .clab{color:var(--dim); font-size:11px; letter-spacing:1px; white-space:nowrap}
-.bitrow{display:flex; gap:4px}
+.bitrow{display:flex; gap:4px; flex-wrap:wrap}
 .bit{
   width:27px; height:30px; display:flex; align-items:center; justify-content:center;
   border:1px solid #2a3d55; border-radius:6px; background:#0d1626; font-size:14px; user-select:none;
@@ -155,7 +156,7 @@ tr.done td:nth-child(6){color:var(--green)}
   border:1px solid var(--green); border-radius:10px; color:var(--green);
   background:#07160f; box-shadow:0 0 18px rgba(74,222,128,.25) inset, 0 0 12px rgba(74,222,128,.25);
 }
-#banner.show{display:block; animation:drop .4s ease-out}
+#banner.show{display:block; animation:drop .4s ease-out; word-break:break-all}
 #banner.bad{border-color:var(--red); color:var(--red); background:#170808; box-shadow:none}
 @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
 @media (max-width:1080px){ /* stacked layout: allow normal page scroll again */
@@ -174,8 +175,8 @@ tr.done td:nth-child(6){color:var(--green)}
 </header>
 
 <div id="controls">
-  <label>N <input id="inN" type="number" min="0" value="181"></label>
-  <label>width <select id="inW">
+  <label>N <input id="inN" type="text" inputmode="numeric" value="181"></label>
+  <label id="wLbl">width <select id="inW">
     <option>4</option><option selected>8</option><option>12</option><option>16</option>
   </select></label>
   <label>view <select id="inM">
@@ -442,7 +443,8 @@ makeFF('r1', 220, 'R1 · remainder MSB');
 makeFF('r0', 390, 'R0 · remainder LSB');
 
 /* ============================== STATE + UI ============================== */
-const S = {width:8, N:181, bits:[], i:0, r1:0, r0:0, qbits:[], phase:0, nets:{}, running:false, mode:'clock'};
+// N is a BigInt: async mode is unbounded, so no Number math on N/Q anywhere
+const S = {width:8, widthSel:8, N:181n, bits:[], i:0, r1:0, r0:0, qbits:[], phase:0, nets:{}, running:false, mode:'clock'};
 let gen = 0, busy = false, speed = 1;
 const BASE = 520;
 const dur = () => BASE / speed;
@@ -506,7 +508,7 @@ function status(){
   $('#stStep').textContent = `${Math.min(S.i, S.width)} / ${S.width}`;
   $('#stR').textContent = `${S.r1}${S.r0}  (${S.r1*2 + S.r0})`;
   const got = S.qbits.filter(x => x !== undefined);
-  $('#stQ').textContent = got.length ? `${got.join('')}…  (${parseInt(got.join(''),2) || 0})` : '—';
+  $('#stQ').textContent = got.length ? `${got.join('')}…  (${BigInt('0b' + got.join(''))})` : '—';
 }
 
 /* --- conveyor / quotient rows --- */
@@ -515,7 +517,7 @@ function buildRows(){
   S.bits.forEach((b, k) => {
     const d = document.createElement('div');
     d.className = 'bit'; d.textContent = b;
-    d.onclick = () => { S.bits[k] ^= 1; S.N = S.bits.reduce((a,x) => a*2+x, 0); $('#inN').value = S.N; reset(); };
+    d.onclick = () => { S.bits[k] ^= 1; setN(S.bits.reduce((a,x) => a*2n + BigInt(x), 0n)); };
     bb.appendChild(d);
   });
   $('#deceq').textContent = `= ${S.N}`;
@@ -895,13 +897,13 @@ function firePhase(p){
 function finished(){ return S.i >= S.width; }
 function finish(){
   S.running = false; setRunBtn();
-  const Q = parseInt(S.qbits.join(''), 2), R = S.r1*2 + S.r0;
+  const Qs = S.qbits.join(''), Q = BigInt('0b' + Qs), R = S.r1*2 + S.r0;
   [...$('#rbits').children].forEach((c, k) => { c.textContent = k ? S.r0 : S.r1; c.classList.add('rset'); });
-  const ok = 3*Q + R === S.N && R < 3;
+  const ok = 3n*Q + BigInt(R) === S.N && R < 3;
   const bn = $('#banner');
   bn.className = 'show' + (ok ? '' : ' bad');
   bn.textContent = ok
-    ? `✓  ${S.N} = 3 × ${Q} + ${R}   ·   Q = ${bin(Q, S.width)}   R = ${bin(R,2)}`
+    ? `✓  ${S.N} = 3 × ${Q} + ${R}   ·   Q = ${Qs}   R = ${bin(R,2)}`
     : `✗  check failed: 3×${Q}+${R} ≠ ${S.N}`;
   setPhaseInd(-1);
 }
@@ -944,11 +946,20 @@ function reset(){
   setPhaseInd(-1);
   status();
 }
-function setN(n){
-  const max = 2 ** S.width - 1;
-  S.N = Math.max(0, Math.min(max, Math.floor(n) || 0));
-  $('#inN').value = S.N; $('#inN').max = max;
-  S.bits = Array.from({length: S.width}, (_, k) => (S.N >> (S.width - 1 - k)) & 1);
+function setN(n){ // n: decimal string | number | BigInt
+  let N;
+  try { N = BigInt(String(n).replace(/[^\d]/g, '') || '0'); } catch { N = 0n; }
+  if (S.mode === 'async'){        // unbounded: the bit stream is as long as N needs
+    S.N = N;
+    S.bits = N.toString(2).split('').map(Number);
+    S.width = S.bits.length;
+  } else {                        // clocked/cascade views draw fixed-width hardware
+    const max = (1n << BigInt(S.widthSel)) - 1n;
+    S.N = N > max ? max : N;
+    S.width = S.widthSel;
+    S.bits = S.N.toString(2).padStart(S.width, '0').split('').map(Number);
+  }
+  $('#inN').value = S.N.toString();
   reset();
 }
 
@@ -957,9 +968,14 @@ $('#bRun').onclick = () => { if (S.running){ S.running = false; setRunBtn(); } e
 $('#bPh').onclick  = stepPhase;
 $('#bCy').onclick  = stepCycle;
 $('#bRst').onclick = reset;
-$('#bRnd').onclick = () => setN(Math.floor(Math.random() * 2 ** S.width));
-$('#inN').onchange = e => setN(+e.target.value);
-$('#inW').onchange = e => { S.width = +e.target.value; setN(S.N); };
+$('#bRnd').onclick = () => {
+  const len = S.mode === 'async' ? 8 + Math.floor(Math.random() * 57) : S.widthSel; // async: 8..64 bits
+  let s = '1';
+  for (let i = 1; i < len; i++) s += Math.random() < 0.5 ? '1' : '0';
+  setN(BigInt('0b' + s));
+};
+$('#inN').onchange = e => setN(e.target.value);
+$('#inW').onchange = e => { S.widthSel = +e.target.value; setN(S.N); };
 const PHLBL = {
   clock:['INPUTS','NOT','AND','OR','CLK ⇧'],
   async:['DATA WAVE','MINTERM C','OUTPUT RAILS','DONE → ACK','NULL WAVE'],
@@ -978,7 +994,8 @@ function setMode(m){
   $('#bCy').style.display = m === 'comb' ? 'none' : '';
   $('#stStepLbl').textContent = m === 'clock' ? 'cycle' : m === 'async' ? 'bit / handshake' : 'stage';
   $('#stRLbl').textContent = m === 'clock' ? 'remainder reg r' : m === 'async' ? 'remainder r (latch)' : 'remainder r (ripple)';
-  reset();
+  $('#wLbl').style.display = m === 'async' ? 'none' : '';  // async is unbounded — no width
+  setN(S.N);  // re-derives bits for the new mode (clamps only in bounded modes) + resets
 }
 $('#inM').onchange = e => setMode(e.target.value);
 $('#inS').oninput  = e => { speed = +e.target.value; $('#sV').textContent = '×' + speed.toFixed(2); };
@@ -1027,8 +1044,7 @@ function selfTest(){
 buildTT();
 selfTest();
 buildAsync();
-setN(181);
-setMode('async');   // self-timed handshake is the default view
+setMode('async');   // self-timed handshake is the default view (setMode derives bits from S.N)
 </script>
 </body>
 </html>
