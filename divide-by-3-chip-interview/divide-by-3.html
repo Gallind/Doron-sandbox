@@ -123,6 +123,13 @@ g.ff.latch .ffbox{animation:ffl .5s ease-out}
 .ffpin{fill:#647d96; font-size:9px}
 .clkw{fill:none; stroke:#4a6480; stroke-width:1.4}
 g.ff.latch .clkw{stroke:var(--pink)}
+/* cascade (no-clock) view */
+.sblock{fill:#0c1424; stroke:#33475e; stroke-width:1.5}
+g.stg .stxt{fill:#48586c; font-size:12px; dominant-baseline:central; text-anchor:middle}
+g.stg.done .sblock{stroke:var(--hi); filter:drop-shadow(0 0 4px rgba(56,232,255,.35))}
+g.stg.done .stxt{fill:#d9f6ff}
+g.stg.hot .sblock{stroke:#fff; filter:drop-shadow(0 0 12px var(--hi))}
+g.stg.hot .stxt{fill:#fff}
 /* panel widgets */
 .strow{display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px dashed #14202f}
 .strow b{color:#eaf6ff; font-weight:600}
@@ -171,6 +178,10 @@ tr.done td:nth-child(6){color:var(--green)}
   <label>width <select id="inW">
     <option>4</option><option selected>8</option><option>12</option><option>16</option>
   </select></label>
+  <label>view <select id="inM">
+    <option value="clock" selected>⏱ clocked · 1 stage + register</option>
+    <option value="comb">⚡ no clock · n stages ripple</option>
+  </select></label>
   <button id="bRnd" title="random N">⚄ random</button>
   <span class="sep"></span>
   <button id="bRun" class="primary">▶ run</button>
@@ -192,7 +203,7 @@ tr.done td:nth-child(6){color:var(--green)}
       <span data-p="0">INPUTS</span><span data-p="1">NOT</span><span data-p="2">AND</span>
       <span data-p="3">OR</span><span data-p="4" class="clk">CLK ⇧</span>
     </div>
-    <div id="die" class="card"><svg id="svg" viewBox="0 0 1000 620" aria-label="gate-level schematic of the divide-by-3 stage"></svg></div>
+    <div id="die" class="card"><svg id="svg" viewBox="0 0 1000 620" aria-label="gate-level schematic of the divide-by-3 stage"></svg><svg id="csvg" viewBox="0 0 700 600" style="display:none" aria-label="combinational cascade of divide-by-3 stages"></svg></div>
     <div class="convey card">
       <span class="clab">QUOTIENT Q</span><div class="bitrow" id="qbits"></div>
       <span class="clab">REMAINDER R</span><div class="bitrow" id="rbits"></div>
@@ -203,9 +214,9 @@ tr.done td:nth-child(6){color:var(--green)}
   <div id="panel">
     <div class="card"><h3>STATUS</h3><div id="status">
       <div class="strow"><span>N</span><b id="stN"></b></div>
-      <div class="strow"><span>cycle</span><b id="stStep"></b></div>
+      <div class="strow"><span id="stStepLbl">cycle</span><b id="stStep"></b></div>
       <div class="strow"><span>input bit b</span><b id="stB" class="big">—</b></div>
-      <div class="strow"><span>remainder reg r</span><b id="stR" class="big"></b></div>
+      <div class="strow"><span id="stRLbl">remainder reg r</span><b id="stR" class="big"></b></div>
       <div class="strow"><span>window v = (r≪1)|b</span><b id="stV" class="big">—</b></div>
       <div class="strow"><span>quotient bit q</span><b id="stQb" class="big">—</b></div>
       <div class="strow"><span>Q so far</span><b id="stQ"></b></div>
@@ -226,10 +237,14 @@ tr.done td:nth-child(6){color:var(--green)}
       <table><thead><tr><th>#</th><th>b</th><th>r</th><th>v</th><th>v≥3</th><th>q</th><th>r′</th></tr></thead><tbody id="trb"></tbody></table>
     </div></div>
 
-    <div class="card fn">Each clock the chip slides one bit of N into the 3-bit window
+    <div class="card fn">Each step slides one bit of N into the 3-bit window
     <b>v=(r≪1)|b</b>. Since r&lt;3, v≤5, so the quotient digit is a single bit:
     v≥3 → q=1, r′=v−3, else q=0, r′=v. The comparison and subtraction are baked into
-    the NOT/AND/OR gates you see — no arithmetic unit anywhere.</div>
+    the NOT/AND/OR gates — no arithmetic unit anywhere.
+    <br><br><b>⏱ clocked</b>: one copy of the stage reused n times via the remainder
+    register — minimal hardware, n cycles. <b>⚡ no clock</b>: n chained copies of the
+    same stage, no register — all inputs applied at once, the answer settles after one
+    propagation wave down the chain.</div>
   </div>
 </div>
 
@@ -421,7 +436,7 @@ makeFF('r1', 220, 'R1 · remainder MSB');
 makeFF('r0', 390, 'R0 · remainder LSB');
 
 /* ============================== STATE + UI ============================== */
-const S = {width:8, N:181, bits:[], i:0, r1:0, r0:0, qbits:[], phase:0, nets:{}, running:false};
+const S = {width:8, N:181, bits:[], i:0, r1:0, r0:0, qbits:[], phase:0, nets:{}, running:false, mode:'clock'};
 let gen = 0, busy = false, speed = 1;
 const BASE = 520;
 const dur = () => BASE / speed;
@@ -541,6 +556,70 @@ function traceEnd(rn){
   liveRow = null;
 }
 
+/* --- combinational cascade (no-clock view) ---
+   Same stage equations, physically unrolled: n chained copies, no register.
+   One advance() step = one stage's outputs settling as the wave passes. */
+const csvg = $('#csvg');
+let CASC = [];
+function buildCascade(){
+  csvg.innerHTML = '';
+  CASC = [];
+  const n = S.width, rowH = 64, top = 56, cx = 340;
+  csvg.setAttribute('viewBox', `0 0 700 ${top + n*rowH + 44}`);
+  txt(20, 20, 'no clock — all n input bits applied at once; the remainder ripples down and settles', 'lbl2', 'start', csvg);
+  txt(cx, top - 26, 'r = 00 (initial remainder)', 'lbl', 'middle', csvg);
+  el('path', {d:`M${cx},${top-18} L${cx},${top}`, 'class':'w off'}, csvg);
+  for (let k = 0; k < n; k++){
+    const y0 = top + k*rowH, idx = n - 1 - k;
+    const grp = el('g', {'class':'stg'}, csvg);
+    // inputs are live from t=0 — no clock gates them
+    const bw = el('path', {d:`M70,${y0+23} L170,${y0+23}`, 'class':'w ' + (S.bits[k] ? 'on' : 'off')}, grp);
+    txt(64, y0+27, `b${idx}=${S.bits[k]}`, 'netlbl', 'end', grp);
+    el('rect', {x:170, y:y0, width:340, height:46, rx:7, 'class':'sblock'}, grp);
+    txt(174, y0-6, `STAGE ${k}`, 'lbl2', 'start', grp);
+    const t = txt(cx, y0+23, `b=${S.bits[k]}  ·  not settled`, 'stxt', 'middle', grp);
+    const qw = el('path', {d:`M510,${y0+23} L570,${y0+23}`, 'class':'w stale'}, grp);
+    const qg = el('g', {'class':'badge stale'}, grp);
+    el('circle', {cx:584, cy:y0+23, r:9}, qg);
+    const qt = txt(584, y0+23, '·', '', 'middle', qg);
+    txt(600, y0+27, `q${idx}`, 'netlbl', 'start', grp);
+    const rw = el('path', {d:`M${cx},${y0+46} L${cx},${y0+rowH}`, 'class':'w stale'}, grp);
+    const rg = el('g', {'class':'badge stale'}, grp);
+    el('rect', {x:cx+12, y:y0+48, width:34, height:18, rx:4}, rg);
+    const rt = txt(cx+29, y0+57, '··', '', 'middle', rg);
+    if (k === n-1) txt(cx+56, y0+61, '← final remainder R', 'lbl', 'start', grp);
+    CASC.push({grp, t, bw, qw, qbadge:{g:qg, t:qt}, rw, rbadge:{g:rg, t:rt}});
+  }
+}
+function settleStage(k){
+  const b = S.bits[k], r1 = S.r1, r0 = S.r0;
+  const nets = {r1, r0, b};
+  for (const id of GATE_ORDER) nets[GATES[id].out] = evalGate(GATES[id], nets);
+  S.nets = nets; updateEqs();
+  hlTT(r1, r0, b);
+  const v = (r1*2 + r0)*2 + b, rn = nets.rout1*2 + nets.rout0;
+  const st = CASC[k];
+  CASC.forEach((s, j) => s.grp.classList.toggle('hot', j === k));
+  st.grp.classList.add('done');
+  st.t.textContent = `r=${r1}${r0}  b=${b}  v=${bin(v,3)}(${v})  →  q=${nets.q}  r′=${bin(rn,2)}`;
+  st.qw.setAttribute('class', 'w ' + (nets.q ? 'on' : 'off'));
+  st.qbadge.g.setAttribute('class', 'badge ' + (nets.q ? 'b1' : 'b0'));
+  st.qbadge.t.textContent = nets.q;
+  st.rw.setAttribute('class', 'w ' + (rn ? 'on' : 'off'));
+  st.rbadge.g.setAttribute('class', 'badge ' + (rn ? 'b1' : 'b0'));
+  st.rbadge.t.textContent = bin(rn, 2);
+  $('#bits').children[k].classList.add('used');
+  S.qbits[k] = nets.q;
+  const qc = $('#qbits').children[k];
+  qc.textContent = nets.q; qc.classList.add('qset');
+  traceStart(k, b, r1*2 + r0, v); traceQ(nets.q); traceEnd(rn);
+  S.r1 = nets.rout1; S.r0 = nets.rout0;
+  $('#stB').textContent = b; $('#stV').textContent = `${bin(v,3)} (${v})`; $('#stQb').textContent = nets.q;
+  S.i = k + 1;
+  status();
+  if (S.i >= S.width){ st.grp.classList.remove('hot'); finish(); }
+}
+
 /* ============================== PHASES ============================== */
 const PHASES = [
   function ph0(){ // present inputs
@@ -604,7 +683,10 @@ function finish(){
 
 /* ============================== RUNNER ============================== */
 function setRunBtn(){ $('#bRun').textContent = S.running ? '⏸ pause' : '▶ run'; }
-function advance(){ PHASES[S.phase](); S.phase = (S.phase + 1) % 5; }
+function advance(){
+  if (S.mode === 'comb'){ settleStage(S.i); return; }
+  PHASES[S.phase](); S.phase = (S.phase + 1) % 5;
+}
 async function runLoop(){
   const g = gen; S.running = true; setRunBtn();
   while (S.running && g === gen && !finished()){
@@ -627,6 +709,7 @@ function reset(){
   for (const n of ['b','r1','r0',...DERIVED]) updateNet(n);
   FF_ELS.r1.v.textContent = '0'; FF_ELS.r0.v.textContent = '0';
   buildRows();
+  if (S.mode === 'comb') buildCascade();
   $('#trb').innerHTML = ''; liveRow = null;
   document.querySelectorAll('#tt tr.hl').forEach(t => t.classList.remove('hl'));
   $('#banner').className = ''; $('#banner').textContent = '';
@@ -650,6 +733,18 @@ $('#bRst').onclick = reset;
 $('#bRnd').onclick = () => setN(Math.floor(Math.random() * 2 ** S.width));
 $('#inN').onchange = e => setN(+e.target.value);
 $('#inW').onchange = e => { S.width = +e.target.value; setN(S.N); };
+$('#inM').onchange = e => {
+  S.mode = e.target.value;
+  const clk = S.mode === 'clock';
+  svg.style.display = clk ? '' : 'none';
+  csvg.style.display = clk ? 'none' : '';
+  $('#phind').style.display = clk ? '' : 'none';
+  $('#bPh').textContent = clk ? '▸ phase' : '▸ stage';
+  $('#bCy').style.display = clk ? '' : 'none';
+  $('#stStepLbl').textContent = clk ? 'cycle' : 'stage';
+  $('#stRLbl').textContent = clk ? 'remainder reg r' : 'remainder r (ripple)';
+  reset();
+};
 $('#inS').oninput  = e => { speed = +e.target.value; $('#sV').textContent = '×' + speed.toFixed(2); };
 document.addEventListener('keydown', e => {
   if (/INPUT|SELECT/.test(e.target.tagName)) return;
